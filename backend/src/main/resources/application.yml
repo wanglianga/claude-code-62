@@ -1,0 +1,38 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: funeral-platform
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db:5432/funeral}
+    username: ${SPRING_DATASOURCE_USERNAME:funeral}
+    password: ${SPRING_DATASOURCE_PASSWORD:funeral123}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.funeral: INFO
+    org.hibernate: WARN
