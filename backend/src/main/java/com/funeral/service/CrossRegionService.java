@@ -365,6 +365,9 @@ public class CrossRegionService {
     public CrossRegionTransport reportDelay(Long orderId, Map<String, Object> body) {
         FuneralOrder o = mustOrder(orderId);
         CrossRegionTransport c = mustCross(orderId);
+        if (c.getDepartedAt() == null) {
+            throw new BusinessException("车辆尚未发车（或六项核验未完成），不能上报延误；请先完成核验并发车");
+        }
         LocalDateTime newEta = OrderService.parseTimeStatic(body.get("estimatedArrivalAt"));
         c.setEstimatedArrivalAt(newEta);
         c.setStatus("SUSPENDED");
@@ -403,6 +406,8 @@ public class CrossRegionService {
     public CrossRegionTransport arrive(Long orderId, Map<String, Object> body) {
         FuneralOrder o = mustOrder(orderId);
         CrossRegionTransport c = mustCross(orderId);
+        requireArrivable(c);
+
         LocalDateTime now = LocalDateTime.now();
         c.setStatus("ARRIVED");
         c.setArrivedAt(now);
@@ -465,6 +470,30 @@ public class CrossRegionService {
         timeline.add(orderId, "CROSS_REGION", "跨县接运到馆回写：车辆交接（" + c.getReceiverName()
                 + "）、冷藏入库、死亡证明复核、礼厅/火化排期确认均已回写治丧单");
         return c;
+    }
+
+    /**
+     * 到馆回写硬门禁：必须六项核验全部通过且车辆已发车（在途，或在途延误后的暂停）。
+     * 核验未通过、核验阶段暂停、未发车一律拒绝；调用在事务内，拒绝即整体回滚，不落任何变更。
+     */
+    private void requireArrivable(CrossRegionTransport c) {
+        if (c.getArrivedAt() != null || "ARRIVED".equals(c.getStatus())) {
+            throw new BusinessException("该治丧单已完成到馆回写，不能重复登记");
+        }
+        if (c.getDepartedAt() == null) {
+            throw new BusinessException("接运车辆尚未发车，不能登记到馆；请先完成六项核验并发车");
+        }
+        List<String> missing = new ArrayList<>();
+        if (!Boolean.TRUE.equals(c.getCertVerified())) missing.add("死亡证明核验");
+        if (!Boolean.TRUE.equals(c.getPermitVerified())) missing.add("接运许可核验");
+        if (!Boolean.TRUE.equals(c.getVehicleVerified())) missing.add("车辆资质核验");
+        if (!Boolean.TRUE.equals(c.getColdConditionVerified())) missing.add("冷藏条件核验");
+        if (!Boolean.TRUE.equals(c.getReceptionCapacityVerified())) missing.add("馆内接收能力核验");
+        if (!Boolean.TRUE.equals(c.getScheduleVerified())) missing.add("火化/礼厅排期");
+        if (!missing.isEmpty()) {
+            throw new BusinessException("以下核验项未通过，不能登记到馆：" + String.join("、", missing)
+                    + "；请补齐证明/许可/车辆/冷藏与排期后重新核验");
+        }
     }
 
     private ResourceBooking reactivateOrCreate(Long orderId, String type, Long existingId,

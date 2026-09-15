@@ -136,13 +136,19 @@
         <div class="check-row" style="flex:1;min-width:280px">
           <input type="datetime-local" v-model="delayForm.estimatedArrivalAt" />
           <input v-model="delayForm.reason" placeholder="延误原因（道路/车辆/手续）" style="flex:1" />
-          <button class="btn warn" @click="reportDelay" :disabled="canOperate === false">上报车辆延误（暂停排期锁定并通知改期）</button>
+          <button class="btn warn" :disabled="!canArrive" @click="reportDelay">
+            {{ canArrive ? '上报车辆延误（暂停排期锁定并通知改期）' : '需发车后才能上报延误' }}
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- 到馆回写 -->
-    <div class="panel" style="box-shadow:none" v-if="c && canOperate && c.status !== 'ARRIVED'">
+    <!-- 到馆回写（仅六项核验通过且已发车后允许） -->
+    <div class="hint red" v-if="c && !canArrive && c.status !== 'ARRIVED'">
+      到馆回写仅在<b>六项核验全部通过且车辆已发车</b>后开放；当前状态：{{ crossTag.text }}。
+      核验失败或暂停状态下不能直接登记到馆。
+    </div>
+    <div class="panel" style="box-shadow:none" v-if="c && canArrive">
       <div class="panel-hd"><h3>到馆回写</h3></div>
       <div class="panel-bd compact">
         <div class="form-grid">
@@ -236,7 +242,10 @@ const crossTag = computed(() => tag(CROSS_STATUS, c.value?.status || 'PLANNED'))
 const readyToDepart = computed(() => c.value && c.value.certVerified && c.value.permitVerified
   && c.value.vehicleVerified && c.value.coldConditionVerified
   && c.value.receptionCapacityVerified && c.value.scheduleVerified
-  && c.value.status !== 'SUSPENDED')
+  && c.value.status !== 'SUSPENDED' && !c.value.departedAt)
+// 已发车（在途中，或在途延误后的暂停）才允许延误上报与到馆回写
+const canArrive = computed(() => c.value && !!c.value.departedAt
+  && ['IN_TRANSIT', 'SUSPENDED'].includes(c.value.status))
 
 const blankForm = () => ({
   deathPlace: '', pickupAddress: '', localOrgName: '', localContactName: '', localContactPhone: '',
