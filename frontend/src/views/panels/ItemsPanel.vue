@@ -13,6 +13,16 @@
       </select>
     </div>
 
+    <div v-if="inReductionReview" class="hint red">
+      ⚠ 困难家庭减免正在<b>{{ reductionWaitText }}</b>。遗体接运、冷藏、火化等公益基础服务可继续预约；
+      但<b>高价用品和额外仪式（单价≥500元或告别布置/花圈/餐饮/休息室等）需要家属二次签字确认</b>，
+      未完成二次确认的项目不能随整体方案一并确认、也不能开始服务。
+    </div>
+    <div v-if="d.order.reductionStatus === 'APPROVED'" class="hint blue">
+      困难家庭减免已终审通过。此后<b>补选的用品不在减免范围内、不自动扩大减免</b>；如确需追加减免，
+      请到「⑤ 费用与结算」重新提交申请，由财务初审、馆领导再次确认。
+    </div>
+
     <div class="panel" style="box-shadow:none">
       <div class="panel-hd"><h3>服务/物品目录（三类分开）</h3>
         <div class="tabs" style="margin:0;border:0">
@@ -64,10 +74,18 @@
               <td class="small">{{ it.source === 'POLICY' ? '政策减免' : it.source === 'CUSTOM' ? '现场约定' : '服务目录' }}
                 <div class="muted">{{ it.sourceNote }}</div></td>
               <td class="small">{{ it.confirmedByName || '-' }}</td>
-              <td><span class="tag" :class="it.refundable ? 'green' : 'red'">{{ it.refundable ? '可退' : '不可退' }}</span></td>
-              <td><span class="tag" :class="itemTag(it.status).cls">{{ itemTag(it.status).text }}</span></td>
+              <td><span class="tag" :class="it.refundable ? 'green' : 'red'">{{ it.refundable ? '可退' : '不可退' }}</span>
+                <div v-if="it.reductionEligible" class="tag blue mt8">减免范围内</div>
+                <div v-if="it.addedAfterReduction" class="tag red mt8">减免后补选</div>
+              </td>
+              <td><span class="tag" :class="itemTag(it.status).cls">{{ itemTag(it.status).text }}</span>
+                <div v-if="it.reviewGuard && !it.reviewGuardConfirmed" class="tag amber mt8">待二次确认</div>
+                <div v-if="it.reviewGuardConfirmed" class="tag green mt8">已二次确认</div>
+              </td>
               <td class="btn-row" style="gap:4px">
                 <button v-if="it.status === 'PENDING' && isFamily" class="btn sm success" @click="confirm(it)">签字确认</button>
+                <button v-if="it.status === 'CONFIRMED' && it.reviewGuard && !it.reviewGuardConfirmed && isFamily"
+                        class="btn sm warn" @click="guardConfirm(it)">二次签字确认</button>
                 <button v-if="it.status !== 'REMOVED' && !ended" class="btn sm danger" @click="remove(it)">删减(签)</button>
               </td>
             </tr>
@@ -102,6 +120,10 @@ const modal = reactive({ show: false, mode: '', item: null, desc: '', reason: fa
 
 const liveStage = computed(() => ['CONFIRMED', 'IN_SERVICE', 'COMPLETED'].includes(props.d.order.status))
 const ended = computed(() => ['SETTLED', 'ARCHIVED'].includes(props.d.order.status))
+const inReductionReview = computed(() =>
+  ['PENDING', 'FINANCE_PRE_APPROVED'].includes(props.d.order.reductionStatus))
+const reductionWaitText = computed(() =>
+  props.d.order.reductionStatus === 'FINANCE_PRE_APPROVED' ? '财务初审已通过，等待馆领导确认' : '财务初审中')
 const canPlan = computed(() => isFamily && props.d.order.verifyStatus === 'PASS'
   && props.d.items.some(i => i.status !== 'REMOVED')
   && !ended.value)
@@ -155,6 +177,14 @@ function openPlan() {
     desc: '请家属核对全部治丧项目、来源与可退属性后，签字确认整体治丧方案。'
   })
 }
+function guardConfirm(it) {
+  Object.assign(modal, {
+    show: true, mode: 'guard', item: it, reason: false,
+    desc: '【二次确认】' + it.name + ' ×' + it.quantity + '，小计 ¥' + fmtMoney(it.subtotal)
+      + '。该项为困难家庭减免审核期间加入的高价用品/额外仪式，不在公益基础服务减免范围内；' +
+      '家属已知情并同意该项自费，请再次手写签字确认。'
+  })
+}
 
 async function doSign(payload) {
   const id = props.d.order.id
@@ -173,6 +203,8 @@ async function doSign(payload) {
         communicationLogId: Number(selectedLogId.value), ...payload
       })
       await loadGroups()
+    } else if (modal.mode === 'guard') {
+      await api.post(`/orders/${id}/items/${modal.item.id}/guard-confirm`, payload)
     }
     modal.show = false
     emit('toast', '签字已保存')

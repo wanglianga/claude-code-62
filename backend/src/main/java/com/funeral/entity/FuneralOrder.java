@@ -102,8 +102,8 @@ public class FuneralOrder {
     /** UNPAID / PARTIAL / PAID */
     @Column(length = 16)
     private String paymentStatus = "UNPAID";
-    /** NONE / PENDING / APPROVED / REJECTED */
-    @Column(length = 16)
+    /** NONE / PENDING(待财务初审) / FINANCE_PRE_APPROVED(初审通过待馆领导确认) / APPROVED / REJECTED */
+    @Column(length = 24)
     private String reductionStatus = "NONE";
 
     private Boolean familyConfirmed = false;

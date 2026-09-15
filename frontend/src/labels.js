@@ -81,7 +81,24 @@ export const PAY_STATUS = {
 }
 
 export const REDUCTION_STATUS = {
-  NONE: ['未申请', 'gray'], PENDING: ['待审核', 'amber'], APPROVED: ['已批准', 'green'], REJECTED: ['未通过', 'red']
+  NONE: ['未申请', 'gray'],
+  PENDING: ['待财务初审', 'amber'],
+  FINANCE_PRE_APPROVED: ['财务初审通过·待馆领导确认', 'blue'],
+  APPROVED: ['终审通过', 'green'],
+  REJECTED: ['审核未通过', 'red']
+}
+
+export const ASSISTANCE_TYPE = {
+  SUBSISTENCE: '低保救助',
+  EXTREME_POVERTY: '特困人员救助',
+  TEMP_RELIEF: '临时救助'
+}
+
+export const REDUCTION_APP_STATUS = {
+  SUBMITTED: ['待财务初审', 'amber'],
+  FINANCE_PRE_APPROVED: ['待馆领导确认', 'blue'],
+  APPROVED: ['终审通过', 'green'],
+  REJECTED: ['未通过', 'red']
 }
 
 export const COLLAB_STATUS = { OPEN: '待处理', PROCESSING: '处理中', RESOLVED: '已解决' }

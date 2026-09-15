@@ -20,4 +20,7 @@ public class Constants {
     public static final String CLASS_PUBLIC_BASIC = "PUBLIC_BASIC";
     public static final String CLASS_OPTIONAL = "OPTIONAL";
     public static final String CLASS_SUBSIDY = "SUBSIDY";
+
+    /** 减免审核期：高价用品/额外仪式阈值（单价或小计达到该金额需家属二次确认） */
+    public static final java.math.BigDecimal HIGH_PRICE_THRESHOLD = new java.math.BigDecimal("500");
 }

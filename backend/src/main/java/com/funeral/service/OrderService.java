@@ -26,6 +26,7 @@ public class OrderService {
     private final CollaborationTaskRepository collabRepo;
     private final OrderTimelineRepository timelineRepo;
     private final ServiceArchiveRepository archiveRepo;
+    private final ReductionApplicationRepository reductionRepo;
     private final TimelineService timeline;
 
     public OrderService(FuneralOrderRepository orderRepo, OrderItemRepository itemRepo,
@@ -33,6 +34,7 @@ public class OrderService {
                         ResourceBookingRepository bookingRepo, SignatureRecordRepository signatureRepo,
                         CommunicationLogRepository logRepo, CollaborationTaskRepository collabRepo,
                         OrderTimelineRepository timelineRepo, ServiceArchiveRepository archiveRepo,
+                        ReductionApplicationRepository reductionRepo,
                         TimelineService timeline) {
         this.orderRepo = orderRepo;
         this.itemRepo = itemRepo;
@@ -44,6 +46,7 @@ public class OrderService {
         this.collabRepo = collabRepo;
         this.timelineRepo = timelineRepo;
         this.archiveRepo = archiveRepo;
+        this.reductionRepo = reductionRepo;
         this.timeline = timeline;
     }
 
@@ -108,6 +111,7 @@ public class OrderService {
         m.put("collaborations", collabRepo.findByOrderIdOrderByPriorityAscCreatedAtDesc(id));
         m.put("timeline", timelineRepo.findByOrderIdOrderByCreatedAtAsc(id));
         m.put("archive", archiveRepo.findByOrderId(id).orElse(null));
+        m.put("reductions", reductionRepo.findByOrderIdOrderByCreatedAtDesc(id));
         m.put("bill", buildBill(o));
         return m;
     }
@@ -361,6 +365,25 @@ public class OrderService {
         item.setStatus("PENDING");
         item.setRemark((String) body.get("remark"));
 
+        // 减免审核进行期间：基础服务可继续预约；高价用品、额外仪式需家属二次确认
+        boolean inReductionReview = List.of("PENDING", "FINANCE_PRE_APPROVED").contains(o.getReductionStatus());
+        if (inReductionReview && isHighPriceOrExtraCeremony(item)) {
+            item.setReviewGuard(true);
+            item.setRemark(nz(item.getRemark(), "")
+                    + "｜减免审核期间加入的高价/额外仪式项目，需家属二次签字确认");
+        }
+        // 减免终审通过后补选：减免范围不自动扩大，需重新申请减免并确认
+        ReductionApplication approvedApp = reductionRepo
+                .findFirstByOrderIdAndStatusOrderByCreatedAtDesc(orderId, "APPROVED").orElse(null);
+        if ("APPROVED".equals(o.getReductionStatus()) && approvedApp != null
+                && !Constants.CLASS_SUBSIDY.equals(item.getServiceClass())) {
+            item.setAddedAfterReduction(true);
+            item.setReductionApplicationId(approvedApp.getId());
+            item.setReductionEligible(false);
+            item.setRemark(nz(item.getRemark(), "")
+                    + "｜减免通过后补选，不在已批准减免范围内，需重新确认");
+        }
+
         // 服务进行中临时增加：必须先有已锁定的沟通记录，并由家属当场手写签字
         boolean liveStage = List.of("CONFIRMED", "IN_SERVICE", "COMPLETED").contains(o.getStatus());
         CommunicationLog lockedLog = null;
@@ -424,7 +447,35 @@ public class OrderService {
         item.setConfirmedAt(java.time.LocalDateTime.now());
         item.setSignatureId(sign.getId());
         itemRepo.save(item);
-        timeline.add(orderId, "SIGN", "家属签字确认项目：" + item.getName());
+        timeline.add(orderId, "SIGN", "家属签字确认项目：" + item.getName()
+                + (Boolean.TRUE.equals(item.getReviewGuard())
+                ? "（减免审核期间的高价/额外仪式项目，尚需二次确认）" : ""));
+        return sign;
+    }
+
+    /** 减免审核期间加入的高价用品/额外仪式：家属知情后二次签字确认 */
+    @Transactional
+    public SignatureRecord confirmGuardedItem(Long orderId, Long itemId, Map<String, Object> body) {
+        FuneralOrder o = mustGet(orderId);
+        OrderItem item = itemRepo.findById(itemId)
+                .filter(i -> i.getOrderId().equals(orderId))
+                .orElseThrow(() -> new BusinessException("订单条目不存在"));
+        if (!Boolean.TRUE.equals(item.getReviewGuard())) {
+            throw new BusinessException("该项目不是审核期间的高价/额外仪式项目，无需二次确认");
+        }
+        if (!"CONFIRMED".equals(item.getStatus())) {
+            throw new BusinessException("请先完成该项目的首次签字确认，再进行二次确认");
+        }
+        if (Boolean.TRUE.equals(item.getReviewGuardConfirmed())) {
+            throw new BusinessException("该项目已完成二次确认");
+        }
+        SignatureRecord sign = saveSignature(o, "CONFIRM_GUARDED_ITEM",
+                "二次确认（减免审核期间高价/额外仪式，知情仍需自费）：" + item.getName()
+                        + " ×" + item.getQuantity() + "，小计 " + item.getSubtotal()
+                        + " 元；家属知悉该项不纳入基础服务减免", itemId, body);
+        item.setReviewGuardConfirmed(true);
+        itemRepo.save(item);
+        timeline.add(orderId, "SIGN", "家属二次签字确认高价/额外仪式项目：" + item.getName());
         return sign;
     }
 
@@ -475,11 +526,21 @@ public class OrderService {
         }
         List<OrderItem> pending = items.stream().filter(i -> "PENDING".equals(i.getStatus())).toList();
 
+        // 审核期间的高价/额外仪式必须完成二次签字，不能由整体方案签字一并带过
+        List<OrderItem> unguarded = items.stream()
+                .filter(i -> Boolean.TRUE.equals(i.getReviewGuard())
+                        && !Boolean.TRUE.equals(i.getReviewGuardConfirmed())).toList();
+        if (!unguarded.isEmpty()) {
+            throw new BusinessException("减免审核期间加入的高价/额外仪式项目尚缺家属二次签字确认："
+                    + unguarded.stream().map(OrderItem::getName).toList());
+        }
+
         SignatureRecord planSign = saveSignature(o, "CONFIRM_PLAN",
                 "确认治丧方案：共 " + items.size() + " 项，费用合计（未减补助）"
                         + buildBill(o).get("totalAmount") + " 元", null, body);
-        // 未逐项签字的条目，以方案签字一并确认并留痕
+        // 未逐项签字的普通条目，以方案签字一并确认并留痕；二次确认标记的条目不在此列
         for (OrderItem it : pending) {
+            if (Boolean.TRUE.equals(it.getReviewGuard())) continue;
             checkStock(it, it.getQuantity(), true);
             deductStock(it.getCatalogId(), it.getQuantity());
             it.setStatus("CONFIRMED");
@@ -632,62 +693,243 @@ public class OrderService {
     }
 
     // ============================================================
-    // 低保等减免审核（政府补助项目 + 减免依据）
+    // 困难家庭减免审核（两级：财务初审 → 馆领导确认）
     // ============================================================
 
+    /** 家属提交减免申请：救助类型、证明材料、社区联系人、申请减免项目 */
     @Transactional
-    public FuneralOrder requestReduction(Long orderId, Map<String, Object> body) {
+    public ReductionApplication applyReduction(Long orderId, Map<String, Object> body) {
         FuneralOrder o = mustGet(orderId);
+        if (List.of("SETTLED", "ARCHIVED").contains(o.getStatus())) {
+            throw new BusinessException("订单已结算归档，不能再申请减免");
+        }
+        ReductionApplication app = new ReductionApplication();
+        app.setOrderId(orderId);
+        app.setOrderNo(o.getOrderNo());
+        app.setAssistanceType(nz((String) body.get("assistanceType"), "SUBSISTENCE"));
+        app.setApplicantName(str(body, "applicantName", "请填写申请人姓名"));
+        app.setApplicantPhone((String) body.get("applicantPhone"));
+        app.setMaterialsNote(str(body, "materialsNote", "请填写证明材料（证件名称/编号/是否已收复印件）"));
+        app.setCommunityContactName((String) body.get("communityContactName"));
+        app.setCommunityContactPhone((String) body.get("communityContactPhone"));
+        app.setRequestedCatalogIds(toCsvIds(body.get("requestedCatalogIds")));
+        app.setStatus("SUBMITTED");
+        reductionRepo.save(app);
+
+        // 已批准过又补选用品：重新进入两级审核，新申请不改变既有补助，终审通过后才扩大减免范围
         o.setReductionStatus("PENDING");
         orderRepo.save(o);
-        createCollabInternal(o, "REDUCTION_REVIEW", "低保/救助减免待审核",
-                "家属申请减免：" + nz((String) body.get("reason"), "见证件材料"),
+
+        createCollabInternal(o, "REDUCTION_REVIEW",
+                "困难家庭减免待财务初审（" + assistanceText(app.getAssistanceType()) + "）",
+                "申请人：" + app.getApplicantName() + "；证明材料：" + app.getMaterialsNote()
+                        + (app.getCommunityContactName() != null ? "；社区联系人："
+                        + app.getCommunityContactName() + " " + nz(app.getCommunityContactPhone(), "") : "")
+                        + "；申请减免项目：" + app.getRequestedCatalogIds(),
                 Constants.ROLE_FINANCE, 1);
-        timeline.add(orderId, "REDUCTION", "家属提交减免申请，等待财务/馆领导审核");
-        return o;
+        timeline.add(orderId, "REDUCTION", "家属提交困难家庭减免申请（" + assistanceText(app.getAssistanceType())
+                + "），材料：" + abbreviate(app.getMaterialsNote(), 60) + "，等待财务初审。审核期间基础服务可继续预约");
+        return app;
     }
 
+    /** 财务初审：通过则转馆领导确认；驳回则流程结束 */
     @Transactional
-    public FuneralOrder reviewReduction(Long orderId, boolean approved, Map<String, Object> body) {
-        FuneralOrder o = mustGet(orderId);
-        if (approved) {
-            o.setReductionStatus("APPROVED");
-            // 审批通过的补助项目加入订单（来源=政策，家属可见减免依据）
-            @SuppressWarnings("unchecked")
-            List<Number> ids = (List<Number>) body.getOrDefault("subsidyCatalogIds", List.of());
-            for (Number cid : ids) {
-                CatalogItem c = catalogRepo.findById(cid.longValue()).orElse(null);
-                if (c == null || !Constants.CLASS_SUBSIDY.equals(c.getServiceClass())) continue;
-                boolean exists = itemRepo.findByOrderIdOrderByCategoryAscIdAsc(orderId).stream()
-                        .anyMatch(i -> !"REMOVED".equals(i.getStatus())
-                                && c.getId().equals(i.getCatalogId()));
-                if (exists) continue;
-                OrderItem item = new OrderItem();
-                item.setOrderId(orderId);
-                item.setCatalogId(c.getId());
-                item.setName(c.getName());
-                item.setCategory(c.getCategory());
-                item.setServiceClass(Constants.CLASS_SUBSIDY);
-                item.setUnit(c.getUnit());
-                item.setUnitPrice(c.getUnitPrice());
-                item.setQuantity(1);
-                item.setSubtotal(c.getUnitPrice());
-                item.setStatus("CONFIRMED");
-                item.setRefundable(false);
-                item.setSource("POLICY");
-                item.setSourceNote("经" + CurrentUser.name() + "审核通过：" + nz(c.getSourceNote(), "政府补助政策"));
-                item.setConfirmedById(CurrentUser.id());
-                item.setConfirmedByName(CurrentUser.name());
-                item.setConfirmedAt(LocalDateTime.now());
-                itemRepo.save(item);
-            }
-            timeline.add(orderId, "REDUCTION", "减免审核通过，依据：" + nz((String) body.get("basis"), "民政救助政策"));
-        } else {
-            o.setReductionStatus("REJECTED");
-            timeline.add(orderId, "REDUCTION", "减免审核未通过：" + nz((String) body.get("basis"), "不符合救助条件"));
+    public ReductionApplication financeReviewReduction(Long orderId, boolean approved, Map<String, Object> body) {
+        if (!List.of(Constants.ROLE_FINANCE).contains(CurrentUser.role())) {
+            throw new BusinessException("困难家庭减免初审由财务办理");
         }
+        FuneralOrder o = mustGet(orderId);
+        ReductionApplication app = reductionRepo
+                .findFirstByOrderIdAndStatusOrderByCreatedAtDesc(orderId, "SUBMITTED")
+                .orElseThrow(() -> new BusinessException("没有待财务初审的减免申请"));
+        if (approved) {
+            app.setStatus("FINANCE_PRE_APPROVED");
+            app.setFinanceReviewerId(CurrentUser.id());
+            app.setFinanceReviewerName(CurrentUser.name());
+            app.setFinanceOpinion(nz((String) body.get("opinion"), "材料齐全，困难情况属实，拟同意按救助政策办理"));
+            app.setFinanceReviewedAt(LocalDateTime.now());
+            reductionRepo.save(app);
+            o.setReductionStatus("FINANCE_PRE_APPROVED");
+            orderRepo.save(o);
+            createCollabInternal(o, "REDUCTION_REVIEW", "困难家庭减免待馆领导终审确认",
+                    "财务初审意见：" + app.getFinanceOpinion()
+                            + "；救助类型：" + assistanceText(app.getAssistanceType())
+                            + "；申请项目：" + nz(app.getRequestedCatalogIds(), "无"),
+                    Constants.ROLE_LEADER, 1);
+            timeline.add(orderId, "REDUCTION", "财务初审通过（" + app.getFinanceReviewerName()
+                    + "），转馆领导终审确认");
+        } else {
+            app.setStatus("REJECTED");
+            app.setFinanceReviewerId(CurrentUser.id());
+            app.setFinanceReviewerName(CurrentUser.name());
+            app.setFinanceOpinion(str(body, "opinion", "请填写驳回原因"));
+            app.setFinanceReviewedAt(LocalDateTime.now());
+            reductionRepo.save(app);
+            // 此前已有终审通过的减免时，原减免继续有效（本次补选的扩大申请被驳回，不影响既有补助）
+            o.setReductionStatus(hasPriorApproval(orderId, app.getId()) ? "APPROVED" : "REJECTED");
+            orderRepo.save(o);
+            timeline.add(orderId, "REDUCTION", "财务初审驳回：" + app.getFinanceOpinion()
+                    + ("APPROVED".equals(o.getReductionStatus()) ? "；原已批准减免继续有效，本次不扩大范围" : ""));
+        }
+        return app;
+    }
+
+    /** 馆领导终审：批准补助项目与可减免范围，驳回则流程结束 */
+    @Transactional
+    public ReductionApplication leaderReviewReduction(Long orderId, boolean approved, Map<String, Object> body) {
+        if (!List.of(Constants.ROLE_LEADER).contains(CurrentUser.role())) {
+            throw new BusinessException("困难家庭减免终审由馆领导确认");
+        }
+        FuneralOrder o = mustGet(orderId);
+        ReductionApplication app = reductionRepo
+                .findFirstByOrderIdAndStatusOrderByCreatedAtDesc(orderId, "FINANCE_PRE_APPROVED")
+                .orElseThrow(() -> new BusinessException("没有待馆领导确认的减免申请"));
+        if (!approved) {
+            app.setStatus("REJECTED");
+            app.setLeaderReviewerId(CurrentUser.id());
+            app.setLeaderReviewerName(CurrentUser.name());
+            app.setLeaderOpinion(str(body, "opinion", "请填写终审意见"));
+            app.setLeaderReviewedAt(LocalDateTime.now());
+            reductionRepo.save(app);
+            o.setReductionStatus(hasPriorApproval(orderId, app.getId()) ? "APPROVED" : "REJECTED");
+            orderRepo.save(o);
+            timeline.add(orderId, "REDUCTION", "馆领导终审未通过：" + app.getLeaderOpinion()
+                    + ("APPROVED".equals(o.getReductionStatus()) ? "；原已批准减免继续有效，本次不扩大范围" : ""));
+            return app;
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Number> subsidyIds = (List<Number>) body.getOrDefault("subsidyCatalogIds", List.of());
+        List<Long> approvedCatalogIds = parseCsvIds(body.get("eligibleCatalogIds"));
+        String basis = nz((String) body.get("basis"), "民政救助政策");
+
+        app.setStatus("APPROVED");
+        app.setLeaderReviewerId(CurrentUser.id());
+        app.setLeaderReviewerName(CurrentUser.name());
+        app.setLeaderOpinion(nz((String) body.get("opinion"), "同意按政策给予减免"));
+        app.setLeaderReviewedAt(LocalDateTime.now());
+        app.setApprovedSubsidyIds(toCsvIds(subsidyIds.stream().map(Number::longValue).toList()));
+        app.setApprovedCatalogIds(toCsvIds(approvedCatalogIds));
+        app.setApprovedBasis(basis);
+        reductionRepo.save(app);
+
+        // 生成/补充政府补助冲减行（同一申请的补助行幂等）
+        for (Number cid : subsidyIds) {
+            CatalogItem c = catalogRepo.findById(cid.longValue()).orElse(null);
+            if (c == null || !Constants.CLASS_SUBSIDY.equals(c.getServiceClass())) continue;
+            boolean exists = itemRepo.findByOrderIdOrderByCategoryAscIdAsc(orderId).stream()
+                    .anyMatch(i -> !"REMOVED".equals(i.getStatus()) && c.getId().equals(i.getCatalogId()));
+            if (exists) continue;
+            OrderItem item = new OrderItem();
+            item.setOrderId(orderId);
+            item.setCatalogId(c.getId());
+            item.setName(c.getName());
+            item.setCategory(c.getCategory());
+            item.setServiceClass(Constants.CLASS_SUBSIDY);
+            item.setUnit(c.getUnit());
+            item.setUnitPrice(c.getUnitPrice());
+            item.setQuantity(1);
+            item.setSubtotal(c.getUnitPrice());
+            item.setStatus("CONFIRMED");
+            item.setRefundable(false);
+            item.setSource("POLICY");
+            item.setSourceNote("困难家庭减免，经财务初审、馆领导" + CurrentUser.name() + "终审确认："
+                    + nz(c.getSourceNote(), "政府补助政策"));
+            item.setConfirmedById(CurrentUser.id());
+            item.setConfirmedByName(CurrentUser.name());
+            item.setConfirmedAt(LocalDateTime.now());
+            item.setReductionApplicationId(app.getId());
+            itemRepo.save(item);
+        }
+        // 快照：批准的可减免项目范围（仅标记范围，实际冲减以补助行为准）
+        for (OrderItem it : itemRepo.findByOrderIdOrderByCategoryAscIdAsc(orderId)) {
+            if ("REMOVED".equals(it.getStatus()) || it.getCatalogId() == null) continue;
+            if (approvedCatalogIds.contains(it.getCatalogId())) {
+                it.setReductionEligible(true);
+                it.setReductionApplicationId(app.getId());
+                itemRepo.save(it);
+            }
+        }
+
+        o.setReductionStatus("APPROVED");
         orderRepo.save(o);
-        return o;
+        // 记录批准时家属自费基线，供补选时差额对比
+        Map<String, Object> billNow = buildBill(o);
+        app.setApprovedSelfPayTotal((BigDecimal) billNow.get("payableAmount"));
+        reductionRepo.save(app);
+
+        timeline.add(orderId, "REDUCTION", "馆领导终审通过（" + app.getLeaderReviewerName()
+                + "），依据：" + basis + "；批准补助 " + billNow.get("reductionAmount")
+                + " 元，批准时家属自费 " + app.getApprovedSelfPayTotal() + " 元");
+        return app;
+    }
+
+    /** 差额预览：减免通过后调整用品时，相对批准基线的新增自费与补选项目 */
+    @Transactional(readOnly = true)
+    public Map<String, Object> reductionDelta(Long orderId) {
+        FuneralOrder o = mustGet(orderId);
+        Map<String, Object> bill = buildBill(o);
+        ReductionApplication app = reductionRepo
+                .findFirstByOrderIdAndStatusOrderByCreatedAtDesc(orderId, "APPROVED").orElse(null);
+        BigDecimal baseline = app == null || app.getApprovedSelfPayTotal() == null
+                ? BigDecimal.ZERO : app.getApprovedSelfPayTotal();
+        BigDecimal currentPayable = (BigDecimal) bill.get("payableAmount");
+        BigDecimal delta = currentPayable.subtract(baseline).max(BigDecimal.ZERO);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("reductionStatus", o.getReductionStatus());
+        m.put("approvedSelfPayTotal", baseline);
+        m.put("currentPayable", currentPayable);
+        m.put("deltaAmount", delta);
+        m.put("addedAfterReduction", bill.get("addedAfterItems"));
+        m.put("message", app == null ? null
+                : (delta.compareTo(BigDecimal.ZERO) > 0
+                ? "减免通过后调整用品将新增自费 " + delta + " 元；减免范围不会自动扩大，如需追加减免请重新提交申请并由馆领导确认"
+                : "当前费用未超出批准时的自费基线，无新增差额"));
+        return m;
+    }
+
+    private boolean hasPriorApproval(Long orderId, Long currentAppId) {
+        return reductionRepo.findByOrderIdOrderByCreatedAtDesc(orderId).stream()
+                .anyMatch(a -> "APPROVED".equals(a.getStatus()) && !a.getId().equals(currentAppId));
+    }
+
+    private String toCsvIds(Object raw) {
+        if (raw == null) return "";
+        if (raw instanceof List<?> list) {
+            List<String> ids = new ArrayList<>();
+            for (Object x : list) if (x != null && !x.toString().isBlank()) ids.add(String.valueOf(((Number) x).longValue()));
+            return String.join(",", ids);
+        }
+        return raw.toString();
+    }
+
+    private List<Long> parseCsvIds(Object raw) {
+        List<Long> ids = new ArrayList<>();
+        if (raw == null) return ids;
+        if (raw instanceof List<?> list) {
+            for (Object x : list) if (x != null && !x.toString().isBlank()) ids.add(((Number) x).longValue());
+            return ids;
+        }
+        for (String s : raw.toString().split(",")) if (!s.isBlank()) ids.add(Long.parseLong(s.trim()));
+        return ids;
+    }
+
+    /** 高价用品或额外仪式：单价/小计达阈值，或属于隆重布置、豪华车辆、高档骨灰盒/寿衣、花篮等额外仪式消费 */
+    private boolean isHighPriceOrExtraCeremony(OrderItem item) {
+        if (Constants.CLASS_PUBLIC_BASIC.equals(item.getServiceClass())) return false;
+        if (item.getUnitPrice().abs().compareTo(Constants.HIGH_PRICE_THRESHOLD) >= 0
+                || item.getSubtotal().abs().compareTo(Constants.HIGH_PRICE_THRESHOLD) >= 0) {
+            return true;
+        }
+        return List.of("FAREWELL", "WREATH", "REST_ROOM", "CATERING").contains(item.getCategory());
+    }
+
+    public static String assistanceText(String t) {
+        return switch (t) {
+            case "EXTREME_POVERTY" -> "特困人员救助";
+            case "TEMP_RELIEF" -> "临时救助";
+            default -> "低保救助";
+        };
     }
 
     // ============================================================
@@ -698,9 +940,20 @@ public class OrderService {
     public FuneralOrder startService(Long orderId) {
         FuneralOrder o = mustGet(orderId);
         if (!"CONFIRMED".equals(o.getStatus())) throw new BusinessException("方案未经家属签字确认，不能开始服务");
+        List<OrderItem> unguarded = itemRepo.findByOrderIdOrderByCategoryAscIdAsc(orderId).stream()
+                .filter(i -> !"REMOVED".equals(i.getStatus()))
+                .filter(i -> Boolean.TRUE.equals(i.getReviewGuard())
+                        && !Boolean.TRUE.equals(i.getReviewGuardConfirmed())).toList();
+        if (!unguarded.isEmpty()) {
+            throw new BusinessException("减免审核期间加入的高价/额外仪式项目尚未完成家属二次签字确认："
+                    + unguarded.stream().map(OrderItem::getName).toList()
+                    + "；基础服务可先行，额外消费须二次确认");
+        }
         o.setStatus("IN_SERVICE");
         orderRepo.save(o);
-        timeline.add(orderId, "SERVICE", "治丧服务开始执行（接运/冷藏/告别/火化）");
+        timeline.add(orderId, "SERVICE", "治丧服务开始执行（接运/冷藏/告别/火化）"
+                + (List.of("PENDING", "FINANCE_PRE_APPROVED").contains(o.getReductionStatus())
+                ? "；减免仍在审核，先按基础服务推进" : ""));
         return o;
     }
 
@@ -740,21 +993,44 @@ public class OrderService {
     private Map<String, Object> buildBill(FuneralOrder o) {
         List<OrderItem> items = itemRepo.findByOrderIdOrderByCategoryAscIdAsc(o.getId());
         List<OrderItem> valid = items.stream().filter(i -> !"REMOVED".equals(i.getStatus())).toList();
+
+        boolean reductionApproved = "APPROVED".equals(o.getReductionStatus());
         BigDecimal total = BigDecimal.ZERO;
         BigDecimal reduction = BigDecimal.ZERO;
         List<String> reductionBasis = new ArrayList<>();
+        List<OrderItem> subsidyItems = new ArrayList<>();
+        List<OrderItem> selfPayItems = new ArrayList<>();
+        List<OrderItem> eligibleItems = new ArrayList<>();
+        List<OrderItem> nonReducibleItems = new ArrayList<>();
+        List<OrderItem> addedAfterItems = new ArrayList<>();
+
         for (OrderItem i : valid) {
             if (Constants.CLASS_SUBSIDY.equals(i.getServiceClass())) {
                 reduction = reduction.add(i.getSubtotal().negate());
                 reductionBasis.add(i.getName() + "：" + nz(i.getSourceNote(), "政府补助"));
-            } else {
-                total = total.add(i.getSubtotal());
+                subsidyItems.add(i);
+                continue;
+            }
+            total = total.add(i.getSubtotal());
+            selfPayItems.add(i);
+            if (Boolean.TRUE.equals(i.getReductionEligible())) eligibleItems.add(i);
+            boolean outOfScope = Boolean.TRUE.equals(i.getAddedAfterReduction())
+                    || (reductionApproved && !Boolean.TRUE.equals(i.getReductionEligible()));
+            if (outOfScope) {
+                nonReducibleItems.add(i);
+                if (Boolean.TRUE.equals(i.getAddedAfterReduction())) addedAfterItems.add(i);
             }
         }
         BigDecimal payable = total.subtract(reduction);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("items", valid);
         m.put("removedItems", items.stream().filter(i -> "REMOVED".equals(i.getStatus())).toList());
+        // 费用三分类：已减免 / 仍需自费 / 不可减免
+        m.put("reducedItems", subsidyItems);
+        m.put("eligibleItems", eligibleItems);
+        m.put("selfPayItems", selfPayItems);
+        m.put("nonReducibleItems", nonReducibleItems);
+        m.put("addedAfterItems", addedAfterItems);
         m.put("totalAmount", total);
         m.put("reductionAmount", reduction);
         m.put("payableAmount", payable.max(BigDecimal.ZERO));
@@ -763,6 +1039,9 @@ public class OrderService {
         m.put("reductionStatus", o.getReductionStatus());
         m.put("reductionBasis", reductionBasis);
         m.put("familyConfirmed", o.getFamilyConfirmed());
+        m.put("guardPending", valid.stream()
+                .filter(i -> Boolean.TRUE.equals(i.getReviewGuard())
+                        && !Boolean.TRUE.equals(i.getReviewGuardConfirmed())).toList());
         return m;
     }
 
@@ -773,8 +1052,8 @@ public class OrderService {
         if (!List.of("COMPLETED", "IN_SERVICE", "CONFIRMED").contains(o.getStatus())) {
             throw new BusinessException("当前状态不能确认费用单");
         }
-        if ("PENDING".equals(o.getReductionStatus())) {
-            throw new BusinessException("低保减免仍在审核中，请审核完成后再确认费用");
+        if (List.of("PENDING", "FINANCE_PRE_APPROVED").contains(o.getReductionStatus())) {
+            throw new BusinessException("困难家庭减免仍在两级审核中（财务初审/馆领导确认），请审核完成后再确认费用");
         }
         Map<String, Object> bill = buildBill(o);
         SignatureRecord sign = saveSignature(o, "CONFIRM_BILL",

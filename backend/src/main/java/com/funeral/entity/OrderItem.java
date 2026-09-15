@@ -56,6 +56,21 @@ public class OrderItem {
     @Column(nullable = false, length = 16)
     private String status = "PENDING";
 
+    /** 减免审核期间加入的高价用品/额外仪式：需要家属二次确认（额外签字） */
+    @Column(nullable = false)
+    private Boolean reviewGuard = false;
+    @Column(nullable = false)
+    private Boolean reviewGuardConfirmed = false;
+
+    /** 是否在终审批准的减免范围内（批准时快照） */
+    @Column(nullable = false)
+    private Boolean reductionEligible = false;
+    /** 减免终审通过之后补选加入（减免范围不自动扩大，需重新申请确认） */
+    @Column(nullable = false)
+    private Boolean addedAfterReduction = false;
+    /** 减免范围快照对应的减免申请 id */
+    private Long reductionApplicationId;
+
     @Column(nullable = false)
     private Boolean refundable = true;
 
@@ -87,5 +102,9 @@ public class OrderItem {
         if (quantity == null) quantity = 1;
         if (status == null) status = "PENDING";
         if (refundable == null) refundable = true;
+        if (reviewGuard == null) reviewGuard = false;
+        if (reviewGuardConfirmed == null) reviewGuardConfirmed = false;
+        if (reductionEligible == null) reductionEligible = false;
+        if (addedAfterReduction == null) addedAfterReduction = false;
     }
 }

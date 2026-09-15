@@ -90,17 +90,37 @@ public class OrderController {
         return ApiResponse.ok(orderService.resolveCollab(taskId, body));
     }
 
-    // ---------- 减免 ----------
-    @PostMapping("/{id}/reduction/request")
-    public ApiResponse<FuneralOrder> requestReduction(@PathVariable Long id,
-                                                      @RequestBody Map<String, Object> body) {
-        return ApiResponse.ok(orderService.requestReduction(id, body));
+    // ---------- 困难家庭减免（两级审核） ----------
+    @PostMapping("/{id}/reduction/apply")
+    public ApiResponse<ReductionApplication> applyReduction(@PathVariable Long id,
+                                                            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(orderService.applyReduction(id, body));
     }
 
-    @PostMapping("/{id}/reduction/review")
-    public ApiResponse<FuneralOrder> reviewReduction(@PathVariable Long id,
+    @PostMapping("/{id}/reduction/finance-review")
+    public ApiResponse<ReductionApplication> financeReview(@PathVariable Long id,
+                                                           @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(orderService.financeReviewReduction(id,
+                Boolean.TRUE.equals(body.get("approved")), body));
+    }
+
+    @PostMapping("/{id}/reduction/leader-review")
+    public ApiResponse<ReductionApplication> leaderReview(@PathVariable Long id,
+                                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(orderService.leaderReviewReduction(id,
+                Boolean.TRUE.equals(body.get("approved")), body));
+    }
+
+    @GetMapping("/{id}/reduction/delta")
+    public ApiResponse<Map<String, Object>> reductionDelta(@PathVariable Long id) {
+        return ApiResponse.ok(orderService.reductionDelta(id));
+    }
+
+    // ---------- 审核期高价/额外仪式二次确认 ----------
+    @PostMapping("/{id}/items/{itemId}/guard-confirm")
+    public ApiResponse<SignatureRecord> guardConfirm(@PathVariable Long id, @PathVariable Long itemId,
                                                      @RequestBody Map<String, Object> body) {
-        return ApiResponse.ok(orderService.reviewReduction(id, Boolean.TRUE.equals(body.get("approved")), body));
+        return ApiResponse.ok(orderService.confirmGuardedItem(id, itemId, body));
     }
 
     // ---------- 服务执行 ----------
