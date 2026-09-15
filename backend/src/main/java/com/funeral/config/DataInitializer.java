@@ -45,6 +45,7 @@ public class DataInitializer implements CommandLineRunner {
         create("clerk", "clerk123", "陈晓（业务员）", "CLERK");
         create("finance", "finance123", "赵敏（财务收费）", "FINANCE");
         create("halladmin", "hall123", "孙磊（礼厅管理员）", "HALL_ADMIN");
+        create("crematorium", "crema123", "周师傅（火化组）", "CREMATORIUM");
         create("leader", "leader123", "刘馆长（馆领导）", "LEADER");
     }
 
@@ -63,9 +64,9 @@ public class DataInitializer implements CommandLineRunner {
         // 公益基本服务（政府定价/指导价）
         add("PB01", "遗体接运（本县城区）", "TRANSPORT", "PUBLIC_BASIC", "180", "次", null, false,
                 "县发改局核定公益接运费，城乡同价", "公益基本服务，公示定价");
-        add("PB02", "遗体冷藏存放（每日）", "OTHER", "PUBLIC_BASIC", "80", "日", 6, false,
+        add("PB02", "遗体冷藏存放（每日）", "COLD", "PUBLIC_BASIC", "80", "日", 6, false,
                 "馆内冷藏柜，按日计费", "公益基本服务，公示定价");
-        add("PB03", "遗体火化（普通炉）", "OTHER", "PUBLIC_BASIC", "300", "具", null, false,
+        add("PB03", "遗体火化（普通炉）", "CREMATION", "PUBLIC_BASIC", "300", "具", null, false,
                 "普通火化炉，含骨灰装殓", "公益基本服务，公示定价");
         add("PB04", "骨灰寄存（一年）", "OTHER", "PUBLIC_BASIC", "120", "年", null, true,
                 "馆内骨灰堂寄存", "公益基本服务，公示定价");
@@ -97,6 +98,10 @@ public class DataInitializer implements CommandLineRunner {
                 "八菜一汤简餐，提前2小时预订", "自选服务，按桌结算");
         add("OP13", "豪华殡仪车接送", "TRANSPORT", "OPTIONAL", "500", "次", null, true,
                 "凯迪拉克改装灵车", "自选服务，明码标价");
+        add("OP14", "跨县长途遗体接运", "TRANSPORT", "OPTIONAL", "1600", "次", null, true,
+                "含跨县接运许可办理、长途冷藏转运、司机双人轮换", "自选服务，按里程与接运许可定价");
+        add("OP15", "告别厅场地使用费", "FAREWELL", "PUBLIC_BASIC", "400", "场", null, false,
+                "告别厅基础场地与音响设备，按厅规格公示定价", "公益基本服务，公示定价");
 
         // 政府补助项目（负数冲减，家属凭证明申请）
         add("SUB01", "低保户基本服务费减免", "OTHER", "SUBSIDY", "-300", "项", null, false,
@@ -127,18 +132,27 @@ public class DataInitializer implements CommandLineRunner {
 
     private void seedResources() {
         if (resourceRepo.count() > 0) return;
-        r("VEHICLE", "接运车 皖W·D001", null, true, "常驻车库，配担架与遗体袋");
-        r("VEHICLE", "接运车 皖W·D002", null, true, "常驻车库");
-        r("VEHICLE", "接运车 皖W·D003", null, true, "可跑长途（外地接运）");
+        // 接运车辆（含跨县接运许可与营运资质）
+        vehicle("接运车 皖W·D001", "YZG-2024-001", true, true, "常驻车库，配担架与遗体袋");
+        vehicle("接运车 皖W·D002", "YZG-2024-002", true, true, "常驻车库");
+        vehicle("跨县长程车 皖W·D003", "YZG-2024-003", true, true, "可跑长途（外地接运），配车载冷藏");
+        // 一辆资质过期车辆，用于演示车辆资质核验不通过
+        vehicle("接运车 皖W·D009", "", false, false, "营运资质审验中，暂停跨县接运");
 
         for (int i = 1; i <= 6; i++) {
-            r("COLD", "冷藏位 C-" + String.format("%02d", i), null, true, "单具独立冷柜");
+            Resource cold = new Resource();
+            cold.setType("COLD");
+            cold.setName("冷藏位 C-" + String.format("%02d", i));
+            cold.setCapacity(1);
+            cold.setAvailable(true);
+            cold.setNote("单具独立冷柜，温度 -5℃，可长途遗体入库");
+            resourceRepo.save(cold);
         }
 
-        r("HALL", "明德厅", "SMALL", true, "小型告别厅，约容纳30人");
-        r("HALL", "怀远厅", "MEDIUM", true, "中型告别厅，约容纳80人");
-        r("HALL", "思亲厅", "LARGE", true, "大型告别厅，约容纳150人");
-        r("HALL", "千秋殿", "GRAND", true, "特级告别厅，约容纳300人");
+        hall("明德厅", "SMALL", 30, true, "小型告别厅，约容纳30人");
+        hall("怀远厅", "MEDIUM", 80, true, "中型告别厅，约容纳80人");
+        hall("思亲厅", "LARGE", 150, true, "大型告别厅，约容纳150人");
+        hall("千秋殿", "GRAND", 300, true, "特级告别厅，约容纳300人");
 
         r("FURNACE", "1号火化炉", null, true, "普通炉");
         r("FURNACE", "2号火化炉", null, true, "高档炉");
@@ -150,6 +164,28 @@ public class DataInitializer implements CommandLineRunner {
         maint.setNote("炉衬检修中，暂停排期");
         maint.setUnavailableUntil(LocalDateTime.now().plusDays(3));
         resourceRepo.save(maint);
+    }
+
+    private void vehicle(String name, String permitNo, boolean qualified, boolean available, String note) {
+        Resource res = new Resource();
+        res.setType("VEHICLE");
+        res.setName(name);
+        res.setPermitNo(permitNo);
+        res.setQualified(qualified);
+        res.setAvailable(available);
+        res.setNote(note);
+        resourceRepo.save(res);
+    }
+
+    private void hall(String name, String spec, int capacity, boolean available, String note) {
+        Resource res = new Resource();
+        res.setType("HALL");
+        res.setName(name);
+        res.setHallSpec(spec);
+        res.setCapacity(capacity);
+        res.setAvailable(available);
+        res.setNote(note);
+        resourceRepo.save(res);
     }
 
     private void r(String type, String name, String spec, boolean available, String note) {

@@ -46,6 +46,7 @@ const accounts = [
   { u: 'clerk', p: 'clerk123', label: '业务员' },
   { u: 'transport', p: 'transport123', label: '接运组' },
   { u: 'halladmin', p: 'hall123', label: '礼厅管理员' },
+  { u: 'crematorium', p: 'crema123', label: '火化组' },
   { u: 'finance', p: 'finance123', label: '财务' },
   { u: 'leader', p: 'leader123', label: '馆领导' }
 ]

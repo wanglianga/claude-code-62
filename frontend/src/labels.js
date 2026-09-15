@@ -4,6 +4,7 @@ export const ROLES = {
   CLERK: '业务员',
   FINANCE: '财务',
   HALL_ADMIN: '礼厅管理员',
+  CREMATORIUM: '火化组',
   LEADER: '馆领导'
 }
 
@@ -34,8 +35,10 @@ export const ITEM_STATUS = {
 
 export const ITEM_CATEGORY = {
   TRANSPORT: '遗体接运',
+  COLD: '冷藏存放',
+  CREMATION: '火化',
   EMBALM: '化妆整容',
-  FAREWELL: '告别仪式',
+  FAREWELL: '告别仪式/礼厅',
   WREATH: '花圈挽联',
   BURIAL_CLOTHES: '寿衣',
   URN: '骨灰盒',
@@ -66,8 +69,23 @@ export const COLLAB_TYPE = {
   REDUCTION_REVIEW: ['低保减免待审核', 'FINANCE'],
   HALL_CONFLICT: ['告别厅临时冲突', 'HALL_ADMIN'],
   FURNACE_MAINT: ['火化设备检修', 'HALL_ADMIN'],
+  CREMATION_CONFLICT: ['火化排期冲突', 'CREMATORIUM'],
+  COLD_SHORTAGE: ['冷藏位不足', 'HALL_ADMIN'],
+  VEHICLE_DELAY: ['车辆延误/资质异常', 'TRANSPORT'],
+  PERMIT_MISSING: ['接运许可待补', 'TRANSPORT'],
   NONLOCAL: ['外地逝者协同', 'TRANSPORT'],
   GENERAL: ['其他协同', 'CLERK']
+}
+
+export const CROSS_STATUS = {
+  PLANNED: ['已登记待核验', 'gray'],
+  IN_TRANSIT: ['接运在途', 'blue'],
+  ARRIVED: ['已到馆交接', 'green'],
+  SUSPENDED: ['异常暂停', 'red']
+}
+
+export const PERMIT_STATUS = {
+  PENDING: ['待核验', 'gray'], VERIFIED: ['已核验', 'green'], MISSING: ['缺失', 'red']
 }
 
 export const CERT_STATUS = {

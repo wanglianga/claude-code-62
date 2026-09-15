@@ -102,6 +102,28 @@
       </div>
     </div>
 
+    <!-- 费用业务板块汇总 -->
+    <div class="panel" style="box-shadow:none">
+      <div class="panel-hd"><h3>费用板块汇总（异地接运 / 冷藏 / 火化 / 礼厅 / 用品 / 补助）</h3></div>
+      <div class="panel-bd compact">
+        <table>
+          <thead><tr><th>费用板块</th><th>包含项目</th><th class="num">小计</th></tr></thead>
+          <tbody>
+            <tr v-for="(g, k) in bill.categoryGroups || {}" :key="k"
+                :style="g.items.length ? '' : 'display:none'">
+              <td><b :class="k === 'SUBSIDY' ? 'amount-neg' : ''">{{ g.label }}</b></td>
+              <td class="small muted">
+                <span v-for="it in g.items" :key="it.id" class="tag gray" style="margin:2px 4px 2px 0">
+                  {{ it.name }}（{{ it.confirmedByName || '待确认' }}·{{ it.refundable ? '可退' : '不可退' }}）
+                </span>
+              </td>
+              <td class="num" :class="Number(g.amount) < 0 ? 'amount-neg' : ''">¥{{ fmtMoney(g.amount) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- 费用明细表：三分类列 -->
     <table>
       <thead><tr><th>项目</th><th>分类</th><th>减免状态</th><th class="num">单价</th>

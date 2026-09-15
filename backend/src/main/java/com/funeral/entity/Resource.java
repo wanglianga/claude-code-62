@@ -31,6 +31,17 @@ public class Resource {
     @Column(length = 16)
     private String hallSpec;
 
+    /** 车辆资质是否有效（跨区域接运核验使用，仅车辆使用） */
+    @Column(nullable = false)
+    private Boolean qualified = true;
+
+    /** 跨县接运许可编号 / 车辆营运证号 */
+    @Column(length = 64)
+    private String permitNo;
+
+    /** 容量（冷藏位=1，告别厅=容纳人数），用于馆内接收能力核验 */
+    private Integer capacity;
+
     @Column(nullable = false)
     private Boolean available = true;
 

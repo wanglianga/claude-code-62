@@ -47,7 +47,7 @@
           <label class="fld"><span>与逝者关系</span><input v-model="f.contactRelation" placeholder="配偶/子女..." /></label>
           <label class="fld"><span>联系电话</span><input v-model="f.contactPhone" /></label>
           <label class="fld span3">
-            <span class="check-row"><input type="checkbox" v-model="f.fromOtherCity" /> 逝者来自外地（需长途接运与异地手续协同）</span>
+            <span class="check-row"><input type="checkbox" v-model="f.fromOtherCity" /> 逝者在外地死亡/需跨县接运（提交后请在「② 异地/跨县接运」登记死亡地、当地联系人、证明机构、车辆司机与许可）</span>
           </label>
         </div>
         <div v-if="err" class="hint red mt12">{{ err }}</div>

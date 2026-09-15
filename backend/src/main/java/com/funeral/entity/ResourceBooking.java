@@ -42,9 +42,20 @@ public class ResourceBooking {
     @Column(nullable = false)
     private LocalDateTime endAt;
 
-    /** HELD 预占 / CONFIRMED 已确认 / RELEASED 已释放 */
+    /** HELD 预占 / CONFIRMED 已确认占用 / SUSPENDED 异常暂停锁定 / RELEASED 已释放 */
     @Column(nullable = false, length = 16)
     private String status = "HELD";
+
+    // ---------------- 跨区域接运信息 ----------------
+    @Column(length = 64)
+    private String driverName;
+    @Column(length = 32)
+    private String driverPhone;
+    /** 跨县接运许可编号 */
+    @Column(length = 64)
+    private String permitNo;
+    /** 预计到馆时间 */
+    private LocalDateTime estimatedArrivalAt;
 
     @Column(length = 500)
     private String note;

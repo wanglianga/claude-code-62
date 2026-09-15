@@ -27,6 +27,8 @@ public class OrderService {
     private final OrderTimelineRepository timelineRepo;
     private final ServiceArchiveRepository archiveRepo;
     private final ReductionApplicationRepository reductionRepo;
+    private final CrossRegionTransportRepository crossRegionRepo;
+    private final NotificationRepository notificationRepo;
     private final TimelineService timeline;
 
     public OrderService(FuneralOrderRepository orderRepo, OrderItemRepository itemRepo,
@@ -35,6 +37,8 @@ public class OrderService {
                         CommunicationLogRepository logRepo, CollaborationTaskRepository collabRepo,
                         OrderTimelineRepository timelineRepo, ServiceArchiveRepository archiveRepo,
                         ReductionApplicationRepository reductionRepo,
+                        CrossRegionTransportRepository crossRegionRepo,
+                        NotificationRepository notificationRepo,
                         TimelineService timeline) {
         this.orderRepo = orderRepo;
         this.itemRepo = itemRepo;
@@ -47,6 +51,8 @@ public class OrderService {
         this.timelineRepo = timelineRepo;
         this.archiveRepo = archiveRepo;
         this.reductionRepo = reductionRepo;
+        this.crossRegionRepo = crossRegionRepo;
+        this.notificationRepo = notificationRepo;
         this.timeline = timeline;
     }
 
@@ -112,6 +118,8 @@ public class OrderService {
         m.put("timeline", timelineRepo.findByOrderIdOrderByCreatedAtAsc(id));
         m.put("archive", archiveRepo.findByOrderId(id).orElse(null));
         m.put("reductions", reductionRepo.findByOrderIdOrderByCreatedAtDesc(id));
+        m.put("crossRegion", crossRegionRepo.findByOrderId(id).orElse(null));
+        m.put("notifications", notificationRepo.findByOrderIdOrderByCreatedAtDesc(id));
         m.put("bill", buildBill(o));
         return m;
     }
@@ -1042,7 +1050,42 @@ public class OrderService {
         m.put("guardPending", valid.stream()
                 .filter(i -> Boolean.TRUE.equals(i.getReviewGuard())
                         && !Boolean.TRUE.equals(i.getReviewGuardConfirmed())).toList());
+        m.put("categoryGroups", buildCategoryGroups(valid));
         return m;
+    }
+
+    /** 费用单按业务板块分组：异地接运/冷藏/火化/礼厅/用品/其他/政府补助 */
+    private Map<String, Map<String, Object>> buildCategoryGroups(List<OrderItem> valid) {
+        Map<String, String> groupLabels = new LinkedHashMap<>();
+        groupLabels.put("TRANSPORT", "异地/遗体接运");
+        groupLabels.put("COLD", "冷藏存放");
+        groupLabels.put("CREMATION", "火化");
+        groupLabels.put("FAREWELL", "礼厅与告别");
+        groupLabels.put("GOODS", "治丧用品");
+        groupLabels.put("OTHER_SERVICE", "餐饮/休息室等");
+        groupLabels.put("SUBSIDY", "政府补助项目");
+
+        Map<String, Map<String, Object>> groups = new LinkedHashMap<>();
+        for (String key : groupLabels.keySet()) {
+            Map<String, Object> g = new LinkedHashMap<>();
+            g.put("label", groupLabels.get(key));
+            g.put("items", new ArrayList<OrderItem>());
+            g.put("amount", BigDecimal.ZERO);
+            groups.put(key, g);
+        }
+        for (OrderItem i : valid) {
+            String key;
+            if (Constants.CLASS_SUBSIDY.equals(i.getServiceClass())) key = "SUBSIDY";
+            else if (List.of("WREATH", "BURIAL_CLOTHES", "URN", "EMBALM").contains(i.getCategory())) key = "GOODS";
+            else if (List.of("CATERING", "REST_ROOM").contains(i.getCategory())) key = "OTHER_SERVICE";
+            else if (List.of("TRANSPORT", "COLD", "CREMATION", "FAREWELL").contains(i.getCategory())) key = i.getCategory();
+            else key = "OTHER_SERVICE";
+            @SuppressWarnings("unchecked")
+            List<OrderItem> items = (List<OrderItem>) groups.get(key).get("items");
+            items.add(i);
+            groups.get(key).put("amount", ((BigDecimal) groups.get(key).get("amount")).add(i.getSubtotal()));
+        }
+        return groups;
     }
 
     /** 家属确认费用明细（签字） */
@@ -1257,8 +1300,7 @@ public class OrderService {
         return new BigDecimal(v.toString());
     }
 
-    static LocalDateTime parseTime(Object v) {
-        if (v == null || v.toString().isBlank()) return null;
+    static LocalDateTime parseTime(Object v) {        if (v == null || v.toString().isBlank()) return null;
         String s = v.toString().trim();
         try {
             if (s.length() == 16) return LocalDateTime.parse(s.replace(" ", "T"));
@@ -1267,6 +1309,11 @@ public class OrderService {
         } catch (Exception e) {
             throw new BusinessException("时间格式不正确：" + s + "（应为 yyyy-MM-dd HH:mm）");
         }
+    }
+
+    /** 供其他服务（跨区域接运）复用的时间解析 */
+    public static LocalDateTime parseTimeStatic(Object v) {
+        return parseTime(v);
     }
 
     private static LocalDateTime plusHours(LocalDateTime t, long h) { return t == null ? null : t.plusHours(h); }
@@ -1295,6 +1342,7 @@ public class OrderService {
             case "CLERK" -> "业务员";
             case "FINANCE" -> "财务";
             case "HALL_ADMIN" -> "礼厅管理员";
+            case "CREMATORIUM" -> "火化组";
             case "LEADER" -> "馆领导";
             default -> r;
         };

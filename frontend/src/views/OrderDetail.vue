@@ -41,6 +41,7 @@
         </div>
 
         <VerifyPanel v-if="tab === 'verify'" :d="d" :user="user" @changed="reload" @toast="toast" />
+        <CrossRegionPanel v-else-if="tab === 'cross'" :d="d" :user="user" @changed="reload" @toast="toast" />
         <ItemsPanel v-else-if="tab === 'items'" :d="d" :user="user" @changed="reload" @toast="toast" />
         <CommunicationPanel v-else-if="tab === 'comm'" :d="d" :user="user" @changed="reload" @toast="toast" />
         <CollabPanel v-else-if="tab === 'collab'" :d="d" :user="user" @changed="reload" @toast="toast" />
@@ -56,6 +57,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api, getUser } from '../api'
 import { ORDER_STATUS, CERT_STATUS, HALL_SPEC, tag, fmtTime } from '../labels'
 import VerifyPanel from './panels/VerifyPanel.vue'
+import CrossRegionPanel from './panels/CrossRegionPanel.vue'
 import ItemsPanel from './panels/ItemsPanel.vue'
 import CommunicationPanel from './panels/CommunicationPanel.vue'
 import CollabPanel from './panels/CollabPanel.vue'
@@ -74,13 +76,16 @@ const certTag = computed(() => tag(CERT_STATUS, o.value.certificateStatus || 'PE
 
 const tabs = computed(() => {
   const openCollab = (d.value?.collaborations || []).filter(c => c.status !== 'RESOLVED').length
+  const cross = d.value?.crossRegion
   return [
     { k: 'verify', label: '① 资源核验' },
-    { k: 'items', label: '② 治丧方案与签字' },
-    { k: 'comm', label: '③ 沟通与现场变更' },
-    { k: 'collab', label: '④ 跨岗位协同', badge: openCollab || '' },
-    { k: 'bill', label: '⑤ 费用与结算' },
-    { k: 'archive', label: '⑥ 完成/领取/归档' }
+    { k: 'cross', label: '② 异地/跨县接运',
+      badge: cross?.status === 'SUSPENDED' ? '!' : (d.value?.order.fromOtherCity && !cross ? '需登记' : '') },
+    { k: 'items', label: '③ 治丧方案与签字' },
+    { k: 'comm', label: '④ 沟通与现场变更' },
+    { k: 'collab', label: '⑤ 跨岗位协同', badge: openCollab || '' },
+    { k: 'bill', label: '⑥ 费用与结算' },
+    { k: 'archive', label: '⑦ 完成/领取/归档' }
   ]
 })
 

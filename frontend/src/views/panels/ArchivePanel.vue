@@ -137,6 +137,7 @@ const archiveUnresolved = ref('')
 const EVENT = {
   SUBMIT: '提交预约', VERIFY: '资源核验', NEGOTIATE: '沟通', SIGN: '家属签字',
   ITEM_CHANGE: '项目变更', RESOURCE_CHANGE: '资源变更', COLLAB: '协同',
+  CROSS_REGION: '跨县接运',
   REDUCTION: '减免', SERVICE: '服务执行', SETTLE: '结算', URN_CLAIM: '骨灰领取',
   FEEDBACK: '反馈', ARCHIVE: '归档', SYSTEM: '系统'
 }

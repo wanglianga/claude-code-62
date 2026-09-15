@@ -8,6 +8,7 @@ public class Constants {
     public static final String ROLE_CLERK = "CLERK";
     public static final String ROLE_FINANCE = "FINANCE";
     public static final String ROLE_HALL_ADMIN = "HALL_ADMIN";
+    public static final String ROLE_CREMATORIUM = "CREMATORIUM";
     public static final String ROLE_LEADER = "LEADER";
 
     /** 资源类型 */
