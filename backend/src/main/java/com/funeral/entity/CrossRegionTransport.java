@@ -101,10 +101,15 @@ public class CrossRegionTransport {
     private Long furnaceBookingId;
 
     // ---------------- 到达回写 ----------------
+    /** 实际到馆时间（车辆交接时刻）；ETA 仅为调度预测，二者不得混用 */
     private LocalDateTime arrivedAt;
     /** 车辆交接情况 */
     @Column(length = 1000)
     private String handoverNote;
+    /**
+     * 实际冷藏入库时刻 = 冷藏资源占用起点与冷藏费用计费起点。
+     * 注意：不能使用预计到馆 ETA，延误提前/推迟到馆时以本时刻为准。
+     */
     private LocalDateTime coldStoredAt;
     @Column(length = 500)
     private String coldStorageNote;

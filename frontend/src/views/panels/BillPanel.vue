@@ -124,6 +124,14 @@
       </div>
     </div>
 
+    <!-- 冷藏计费依据（跨区延误后以实际入库时刻起算） -->
+    <div v-if="bill.coldFeeBasis" class="hint">
+      <b>冷藏计费依据：</b>{{ bill.coldFeeBasis.resourceName }}，
+      自<b>实际入库 {{ fmtTime(bill.coldFeeBasis.startAt) }}</b> 起至
+      {{ fmtTime(bill.coldFeeBasis.endAt) }}，计 {{ bill.coldFeeBasis.days }} 日。
+      预计到馆时间仅为调度预测，不作为冷藏占用/计费起点。
+    </div>
+
     <!-- 费用明细表：三分类列 -->
     <table>
       <thead><tr><th>项目</th><th>分类</th><th>减免状态</th><th class="num">单价</th>

@@ -1050,7 +1050,34 @@ public class OrderService {
         m.put("guardPending", valid.stream()
                 .filter(i -> Boolean.TRUE.equals(i.getReviewGuard())
                         && !Boolean.TRUE.equals(i.getReviewGuardConfirmed())).toList());
+        m.put("coldFeeBasis", buildColdFeeBasis(o.getId()));
         m.put("categoryGroups", buildCategoryGroups(valid));
+        return m;
+    }
+
+    /**
+     * 冷藏计费依据：以 COLD 资源占用的【实际入库起点】为准（跨区延误到馆时为实际入库时刻，非 ETA），
+     * 终点为告别排期；返回起止与天数，供费用单/归档与资源日历对齐。
+     */
+    private Map<String, Object> buildColdFeeBasis(Long orderId) {
+        // 取最近一条冷藏占用（含服务完成后已释放的，仅作计费/追溯依据），优先未释放
+        List<ResourceBooking> coldBookings = bookingRepo.findByOrderId(orderId).stream()
+                .filter(b -> Constants.RES_COLD.equals(b.getResourceType())).toList();
+        if (coldBookings.isEmpty()) return null;
+        ResourceBooking b = coldBookings.stream()
+                .filter(x -> !"RELEASED".equals(x.getStatus()))
+                .max((a, x) -> a.getStartAt().compareTo(x.getStartAt()))
+                .orElse(coldBookings.stream()
+                        .max((a, x) -> a.getStartAt().compareTo(x.getStartAt())).orElse(null));
+        if (b == null) return null;
+        long minutes = java.time.Duration.between(b.getStartAt(), b.getEndAt()).toMinutes();
+        long days = Math.max(1, (long) Math.ceil(minutes / (60.0 * 24)));
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("resourceName", b.getResourceName());
+        m.put("startAt", b.getStartAt());
+        m.put("endAt", b.getEndAt());
+        m.put("days", days);
+        m.put("status", b.getStatus());
         return m;
     }
 
@@ -1193,7 +1220,7 @@ public class OrderService {
         ServiceArchive a = archiveRepo.findByOrderId(orderId).orElseGet(ServiceArchive::new);
         a.setOrderId(orderId);
         a.setOrderNo(o.getOrderNo());
-        a.setFeeSnapshot(catalogSnapshot(bill));
+        a.setFeeSnapshot(catalogSnapshot(bill) + timeBasisSnapshot(orderId));
         a.setReductionBasis(String.join("；", (List<String>) bill.get("reductionBasis")));
         if (body.get("unresolvedItems") != null) {
             a.setUnresolvedItems((String) body.get("unresolvedItems"));
@@ -1209,6 +1236,33 @@ public class OrderService {
         orderRepo.save(o);
         timeline.add(orderId, "ARCHIVE", "服务档案归档完成：费用明细、减免依据、火化证明、骨灰领取记录、反馈均已入档");
         return a;
+    }
+
+    /** 归档时间事实：区分 预计到馆(调度预测) / 实际到馆·实际入库(冷藏计费起点) / 礼厅火化排期 */
+    private String timeBasisSnapshot(Long orderId) {
+        StringBuilder sb = new StringBuilder("\n\n——关键时间事实——\n");
+        crossRegionRepo.findByOrderId(orderId).ifPresent(c -> {
+            sb.append("预计到馆（调度预测）：").append(c.getEstimatedArrivalAt() == null ? "-" : c.getEstimatedArrivalAt()).append("\n");
+            sb.append("实际到馆交接：").append(c.getArrivedAt() == null ? "-" : c.getArrivedAt()).append("\n");
+            sb.append("实际冷藏入库（冷藏占用/计费起点）：").append(c.getColdStoredAt() == null ? "-" : c.getColdStoredAt()).append("\n");
+            sb.append("发车时间：").append(c.getDepartedAt() == null ? "-" : c.getDepartedAt()).append("\n");
+        });
+        Map<String, Object> coldBasis = buildColdFeeBasis(orderId);
+        if (coldBasis != null) {
+            sb.append("冷藏资源占用：").append(coldBasis.get("resourceName"))
+                    .append("，").append(coldBasis.get("startAt")).append(" 至 ").append(coldBasis.get("endAt"))
+                    .append("，计费 ").append(coldBasis.get("days")).append(" 日\n");
+        }
+        bookingRepo.findByOrderId(orderId).stream()
+                .filter(b -> Constants.RES_HALL.equals(b.getResourceType()) || Constants.RES_FURNACE.equals(b.getResourceType()))
+                // 服务完成后排期占用可能已释放，仍需作为历史事实入档：每类取最近一条
+                .collect(java.util.stream.Collectors.groupingBy(ResourceBooking::getResourceType,
+                        java.util.stream.Collectors.maxBy(java.util.Comparator.comparing(ResourceBooking::getStartAt))))
+                .values().stream().flatMap(java.util.Optional::stream)
+                .forEach(b -> sb.append(Constants.RES_HALL.equals(b.getResourceType()) ? "告别厅排期（重新确认）：" : "火化排期（重新确认）：")
+                        .append(b.getStartAt()).append(" 至 ").append(b.getEndAt())
+                        .append("（").append(b.getResourceName()).append("）\n"));
+        return sb.toString();
     }
 
     private String catalogSnapshot(Map<String, Object> bill) {

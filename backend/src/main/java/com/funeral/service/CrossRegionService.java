@@ -242,6 +242,10 @@ public class CrossRegionService {
             c.setStatus("PLANNED");
             c.setSuspendReason(null);
             crossRepo.save(c);
+            // 跨区六项核验是五要素核验的超集，同步主单核验结论（避免重复核验产生重复占用）
+            o.setVerifyStatus("PASS");
+            o.setVerifyNote("跨县接运六项核验通过（死亡证明/接运许可/车辆资质/冷藏条件/接收能力/火化礼厅排期）");
+            orderRepo.save(o);
             orderRepo.save(o);
             // 仅关闭本次核验中已恢复/补齐的异常协同；无关或仍未解决的协同保持开放
             boolean coldOk = !needCold || (Boolean.TRUE.equals(c.getColdConditionVerified())
@@ -481,16 +485,25 @@ public class CrossRegionService {
                     bookingRepo.save(b);
                 });
 
-        // 冷藏入库
+        // 先解析重新确认的礼厅/火化排期（延误改期后冷藏终点跟随新告别时间）
+        LocalDateTime farewell = body.get("farewellTime") != null
+                ? OrderService.parseTimeStatic(body.get("farewellTime")) : o.getFarewellTime();
+        LocalDateTime cremation = body.get("cremationTime") != null
+                ? OrderService.parseTimeStatic(body.get("cremationTime"))
+                : (farewell != null ? farewell.plusHours(2) : null);
+        if (farewell != null) o.setFarewellTime(farewell);
+
+        // 冷藏入库：占用与计费起点一律使用【实际入库时刻 now】，
+        // ETA 只是调度预测（延误提前/推迟到馆时不再作为起点），避免出现"未来开始的空档"；
+        // 终点为重新确认的告别排期
         boolean needCold = Boolean.TRUE.equals(c.getEmbalmingRequired()) || Boolean.TRUE.equals(o.getNeedRefrigeration());
         boolean coldReconfirmed = false;
         if (needCold) {
             c.setColdStoredAt(now);
-            LocalDateTime coldStart = c.getEstimatedArrivalAt() != null ? c.getEstimatedArrivalAt() : now;
-            ResourceBooking cb2 = reactivateOrCreate(orderId, "COLD", c.getColdBookingId(), body.get("coldId"),
-                    coldStart, o.getFarewellTime() != null ? o.getFarewellTime() : coldStart.plusHours(48));
-            coldReconfirmed = cb2 != null;
-            if (c.getColdStorageNote() == null) c.setColdStorageNote("遗体已冷藏入库，温度记录正常");
+            reactivateOrCreate(orderId, "COLD", c.getColdBookingId(), body.get("coldId"),
+                    now, farewell != null ? farewell : now.plusHours(48));
+            coldReconfirmed = true;
+            if (c.getColdStorageNote() == null) c.setColdStorageNote("遗体已于实际到馆时冷藏入库，温度记录正常");
         }
 
         // 死亡证明到馆复核
@@ -499,16 +512,10 @@ public class CrossRegionService {
         c.setCertVerified(true);
         if (body.get("certificateNo") != null) o.setCertificateNo((String) body.get("certificateNo"));
 
-        // 火化排期/礼厅重新确认（延误后恢复锁定）
-        LocalDateTime farewell = body.get("farewellTime") != null
-                ? OrderService.parseTimeStatic(body.get("farewellTime")) : o.getFarewellTime();
-        LocalDateTime cremation = body.get("cremationTime") != null
-                ? OrderService.parseTimeStatic(body.get("cremationTime"))
-                : (farewell != null ? farewell.plusHours(2) : null);
+        // 礼厅/火化按重新确认的服务时段恢复锁定（不被实际入库时间覆盖）
         boolean hallReconfirmed = false;
         boolean furnaceReconfirmed = false;
         if (farewell != null) {
-            o.setFarewellTime(farewell);
             ResourceBooking hb = reactivateOrCreate(orderId, "HALL", c.getHallBookingId(),
                     body.get("hallId"), farewell.minusMinutes(30), farewell.plusHours(2));
             if (hb != null) { c.setHallBookingId(hb.getId()); hallReconfirmed = true; }

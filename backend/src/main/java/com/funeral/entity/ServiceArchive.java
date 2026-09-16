@@ -27,7 +27,7 @@ public class ServiceArchive {
     private String orderNo;
 
     // ---------------- 费用归档 ----------------
-    @Column(length = 1000)
+    @Column(columnDefinition = "text")
     private String feeSnapshot;
     @Column(length = 500)
     private String reductionBasis;

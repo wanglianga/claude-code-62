@@ -26,8 +26,12 @@
           <div class="k">接运许可</div>
           <div class="v">{{ c.transportPermitNo || '未登记' }}
             <span class="tag" :class="tag(PERMIT_STATUS, c.permitStatus).cls">{{ tag(PERMIT_STATUS, c.permitStatus).text }}</span></div>
-          <div class="k">预计到馆</div><div class="v">{{ fmtTime(c.estimatedArrivalAt) }}</div>
-          <div class="k">实际到馆</div><div class="v">{{ fmtTime(c.arrivedAt) }}</div>
+          <div class="k">预计到馆</div><div class="v">{{ fmtTime(c.estimatedArrivalAt) }}
+            <span class="tag gray">调度预测</span></div>
+          <div class="k">实际到馆</div><div class="v">{{ fmtTime(c.arrivedAt) }}
+            <span v-if="c.arrivedAt" class="tag green">交接事实</span></div>
+          <div class="k">实际冷藏入库</div><div class="v">{{ fmtTime(c.coldStoredAt) }}
+            <span v-if="c.coldStoredAt" class="tag blue">占用/计费起点</span></div>
           <div class="k">防腐冷藏</div><div class="v">{{ c.embalmingRequired ? '需要' : '不需要' }} {{ c.coldConditionNote || '' }}</div>
           <div class="k">宗教习俗</div><div class="v">{{ c.religiousCustom || '-' }}</div>
           <div class="k">随行亲属</div><div class="v" style="grid-column:3/5">{{ c.accompanyingRelatives || '-' }}</div>
@@ -173,6 +177,15 @@
       </div>
     </div>
 
+    <!-- 到馆后三类时间事实 -->
+    <div v-if="c?.status === 'ARRIVED'" class="hint blue">
+      <b>时间事实（资源日历 / 费用 / 归档统一口径）：</b>
+      预计到馆（调度预测）{{ fmtTime(c.estimatedArrivalAt) }}；
+      实际到馆交接 {{ fmtTime(c.arrivedAt) }}；
+      <b>实际冷藏入库 {{ fmtTime(c.coldStoredAt) }}（冷藏位占用与冷藏费按此时刻起算，不按预计时间）</b>；
+      礼厅/火化按重新确认的排期时段执行。
+    </div>
+
     <!-- 回写结果 -->
     <div class="panel" style="box-shadow:none" v-if="c?.status === 'ARRIVED'">
       <div class="panel-hd"><h3>到馆回写记录（可追溯）</h3><span class="tag green">已到馆交接</span></div>
@@ -181,7 +194,8 @@
           <div class="k">到馆时间</div><div class="v">{{ fmtTime(c.arrivedAt) }}</div>
           <div class="k">接收人</div><div class="v">{{ c.receiverName }}</div>
           <div class="k">车辆交接</div><div class="v" style="grid-column:3/5">{{ c.handoverNote }}</div>
-          <div class="k">冷藏入库</div><div class="v">{{ fmtTime(c.coldStoredAt) }} {{ c.coldStorageNote }}</div>
+          <div class="k">冷藏入库</div><div class="v">{{ fmtTime(c.coldStoredAt) }}
+            <span class="tag blue">计费起点</span> {{ c.coldStorageNote }}</div>
           <div class="k">证明复核</div><div class="v">{{ fmtTime(c.certReverifiedAt) }} {{ c.certReverifyNote }}</div>
           <div class="k">排期确认</div><div class="v">{{ fmtTime(c.scheduleConfirmedAt) }} {{ c.scheduleNote }}</div>
         </div>
