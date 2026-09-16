@@ -243,7 +243,20 @@ public class CrossRegionService {
             c.setSuspendReason(null);
             crossRepo.save(c);
             orderRepo.save(o);
-            timeline.add(orderId, "CROSS_REGION", "跨县接运六项核验通过，车辆/冷藏/礼厅/火化时段已锁定");
+            // 仅关闭本次核验中已恢复/补齐的异常协同；无关或仍未解决的协同保持开放
+            boolean coldOk = !needCold || (Boolean.TRUE.equals(c.getColdConditionVerified())
+                    && Boolean.TRUE.equals(c.getReceptionCapacityVerified()));
+            Map<String, Boolean> resolved = new LinkedHashMap<>();
+            resolved.put("DOC_MISSING", certOk);
+            resolved.put("PERMIT_MISSING", permitOk);
+            resolved.put("VEHICLE_ISSUE", vehicleOk);
+            resolved.put("COLD_SHORTAGE", coldOk);
+            resolved.put("HALL_CONFLICT", hallOk);
+            resolved.put("CREMATION_CONFLICT", furnaceOk);
+            resolveCollabByTypes(orderId, resolved,
+                    "跨县接运重新核验通过，该项已补齐/恢复");
+            timeline.add(orderId, "CROSS_REGION", "跨县接运六项核验通过，车辆/冷藏/礼厅/火化时段已锁定"
+                    + "，已恢复事项的协同同步办结");
         } else {
             // 异常：暂停相关资源锁定，通知主要联系人补材料或改期，发起跨岗位协同
             suspendByFailures(orderId, failures, o, c, eta);
@@ -283,6 +296,44 @@ public class CrossRegionService {
         }
         results.add(ok(type, label + " " + r.getName() + " 排期可用，已具备锁定条件"));
         return true;
+    }
+
+    /**
+     * 按异常类型精确闭环协同：只关闭 map 中为 true（本次确已补齐/恢复）的类型，
+     * 其他未解决协同保持开放。保留处理依据、核验人和完成时间。
+     */
+    private void resolveCollabByTypes(Long orderId, Map<String, Boolean> types, String basis) {
+        List<CollaborationTask> tasks = collabRepo.findByOrderIdOrderByPriorityAscCreatedAtDesc(orderId);
+        for (var entry : types.entrySet()) {
+            if (!Boolean.TRUE.equals(entry.getValue())) continue;
+            for (CollaborationTask t : tasks) {
+                if (entry.getKey().equals(t.getType()) && !"RESOLVED".equals(t.getStatus())) {
+                    t.setStatus("RESOLVED");
+                    t.setAssigneeId(CurrentUser.id());
+                    t.setAssigneeName(CurrentUser.name());
+                    t.setResolution(basis + "；处理/核验人：" + CurrentUser.name()
+                            + "，完成时间 " + LocalDateTime.now());
+                    t.setResolvedAt(LocalDateTime.now());
+                    collabRepo.save(t);
+                    timeline.addAsSystem(orderId, "COLLAB",
+                            "异常协同【" + t.getTitle() + "】已办结：" + basis);
+                }
+            }
+        }
+    }
+
+    /** 车辆延误：已闭环的排期类协同需要重新产生待办（旧办结记录保留，新待办表达当前异常） */
+    private void reopenScheduleCollabs(FuneralOrder o, boolean needCold, LocalDateTime newEta) {
+        createCollabIfAbsent(o, "VEHICLE_DELAY", "跨县接运车辆延误",
+                "车辆延误，新预计到馆 " + newEta + "，请接运组持续跟踪。", Constants.ROLE_TRANSPORT, 1);
+        createCollabIfAbsent(o, "HALL_CONFLICT", "车辆延误：告别厅排期待重新确认",
+                "到馆时间改为 " + newEta + "，待到馆后重新确认礼厅时段。", Constants.ROLE_HALL_ADMIN, 1);
+        createCollabIfAbsent(o, "CREMATION_CONFLICT", "车辆延误：火化排期待重新确认",
+                "到馆时间改为 " + newEta + "，请火化组待到馆后重新确认火化时段。", Constants.ROLE_CREMATORIUM, 1);
+        if (needCold) {
+            createCollabIfAbsent(o, "COLD_SHORTAGE", "车辆延误：冷藏入库时段待重新确认",
+                    "新预计到馆 " + newEta + "，请礼厅管理员预留冷柜。", Constants.ROLE_HALL_ADMIN, 1);
+        }
     }
 
     private void suspendByFailures(Long orderId, List<String> failures, FuneralOrder o,
@@ -328,8 +379,11 @@ public class CrossRegionService {
                 case "DOC_MISSING" -> createCollabIfAbsent(o, "DOC_MISSING", "异地死亡证明待补充",
                         "死亡证明出具机构：" + nz(c.getCertIssuingOrg()) + "；已通知联系人 " + n.getTargetName(),
                         Constants.ROLE_CLERK, 1);
-                case "PERMIT_MISSING", "VEHICLE_ISSUE" -> createCollabIfAbsent(o, "VEHICLE_DELAY",
-                        "跨县接运车辆/许可异常", "请接运组核对车辆营运资质、接运许可与排班，必要时更换长程车辆。",
+                case "PERMIT_MISSING" -> createCollabIfAbsent(o, "PERMIT_MISSING",
+                        "跨县接运许可待补", "请接运组补齐跨县接运/准运许可后重新核验。",
+                        Constants.ROLE_TRANSPORT, 1);
+                case "VEHICLE_ISSUE" -> createCollabIfAbsent(o, "VEHICLE_ISSUE",
+                        "跨县接运车辆资质异常", "请接运组核对车辆营运资质与排班，必要时更换具备资质的长程车辆。",
                         Constants.ROLE_TRANSPORT, 1);
                 case "COLD_SHORTAGE" -> createCollabIfAbsent(o, "COLD_SHORTAGE", "馆内冷藏位不足",
                         "预计到馆 " + eta + " 冷藏位紧张，请礼厅管理员统筹或通知家属改期。",
@@ -394,9 +448,10 @@ public class CrossRegionService {
         n.setSentById(CurrentUser.id());
         n.setSentByName(CurrentUser.name());
         notifRepo.save(n);
-        createCollabIfAbsent(o, "VEHICLE_DELAY", "跨县接运车辆延误",
-                reason + "；新ETA " + newEta + "，已通知主要联系人改期。", Constants.ROLE_TRANSPORT, 1);
-        timeline.add(orderId, "CROSS_REGION", "接运车辆延误，已暂停冷藏/礼厅/火化锁定并通知联系人改期");
+        // 已办结的排期类协同按延误重新挂起（历史办结记录保留），车辆延误协同派接运组
+        boolean needCold = Boolean.TRUE.equals(c.getEmbalmingRequired()) || Boolean.TRUE.equals(o.getNeedRefrigeration());
+        reopenScheduleCollabs(o, needCold, newEta);
+        timeline.add(orderId, "CROSS_REGION", "接运车辆延误，已暂停冷藏/礼厅/火化锁定、通知联系人改期，排期协同重新挂起");
         return c;
     }
 
@@ -428,11 +483,13 @@ public class CrossRegionService {
 
         // 冷藏入库
         boolean needCold = Boolean.TRUE.equals(c.getEmbalmingRequired()) || Boolean.TRUE.equals(o.getNeedRefrigeration());
+        boolean coldReconfirmed = false;
         if (needCold) {
             c.setColdStoredAt(now);
             LocalDateTime coldStart = c.getEstimatedArrivalAt() != null ? c.getEstimatedArrivalAt() : now;
-            reactivateOrCreate(orderId, "COLD", c.getColdBookingId(), body.get("coldId"),
+            ResourceBooking cb2 = reactivateOrCreate(orderId, "COLD", c.getColdBookingId(), body.get("coldId"),
                     coldStart, o.getFarewellTime() != null ? o.getFarewellTime() : coldStart.plusHours(48));
+            coldReconfirmed = cb2 != null;
             if (c.getColdStorageNote() == null) c.setColdStorageNote("遗体已冷藏入库，温度记录正常");
         }
 
@@ -448,27 +505,38 @@ public class CrossRegionService {
         LocalDateTime cremation = body.get("cremationTime") != null
                 ? OrderService.parseTimeStatic(body.get("cremationTime"))
                 : (farewell != null ? farewell.plusHours(2) : null);
+        boolean hallReconfirmed = false;
+        boolean furnaceReconfirmed = false;
         if (farewell != null) {
             o.setFarewellTime(farewell);
-            Long hallId = body.get("hallId") == null ? null : Long.valueOf(String.valueOf(body.get("hallId")));
             ResourceBooking hb = reactivateOrCreate(orderId, "HALL", c.getHallBookingId(),
                     body.get("hallId"), farewell.minusMinutes(30), farewell.plusHours(2));
-            if (hb != null) c.setHallBookingId(hb.getId());
+            if (hb != null) { c.setHallBookingId(hb.getId()); hallReconfirmed = true; }
         }
         if (cremation != null) {
-            Long furnaceId = body.get("furnaceId") == null ? null : Long.valueOf(String.valueOf(body.get("furnaceId")));
             ResourceBooking fb = reactivateOrCreate(orderId, "FURNACE", c.getFurnaceBookingId(),
                     body.get("furnaceId"), cremation.minusMinutes(30), cremation.plusMinutes(60));
-            if (fb != null) c.setFurnaceBookingId(fb.getId());
+            if (fb != null) { c.setFurnaceBookingId(fb.getId()); furnaceReconfirmed = true; }
         }
         c.setScheduleConfirmedAt(now);
         c.setScheduleVerified(true);
         if (c.getScheduleNote() == null) c.setScheduleNote("到馆后礼厅与火化排期已重新确认");
 
+        // 只关闭本次到馆实际重新确认的协同：车辆延误、冷藏/礼厅/火化排期；
+        // 未在本次恢复的异常（如仍缺材料）保持开放，不被无关步骤一并关闭
+        Map<String, Boolean> arrived = new LinkedHashMap<>();
+        arrived.put("VEHICLE_DELAY", true);
+        arrived.put("COLD_SHORTAGE", coldReconfirmed);
+        arrived.put("HALL_CONFLICT", hallReconfirmed);
+        arrived.put("CREMATION_CONFLICT", furnaceReconfirmed);
+        // 到馆证明复核无误时，材料缺失协同一并闭环（留补件/复核依据）
+        arrived.put("DOC_MISSING", true);
+        resolveCollabByTypes(orderId, arrived, "跨县接运车辆已到馆并完成交接/入库/排期重新确认");
+
         orderRepo.save(o);
         crossRepo.save(c);
         timeline.add(orderId, "CROSS_REGION", "跨县接运到馆回写：车辆交接（" + c.getReceiverName()
-                + "）、冷藏入库、死亡证明复核、礼厅/火化排期确认均已回写治丧单");
+                + "）、冷藏入库、死亡证明复核、礼厅/火化排期确认均已回写治丧单，对应协同已按恢复情况闭环");
         return c;
     }
 

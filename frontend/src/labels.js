@@ -71,7 +71,8 @@ export const COLLAB_TYPE = {
   FURNACE_MAINT: ['火化设备检修', 'HALL_ADMIN'],
   CREMATION_CONFLICT: ['火化排期冲突', 'CREMATORIUM'],
   COLD_SHORTAGE: ['冷藏位不足', 'HALL_ADMIN'],
-  VEHICLE_DELAY: ['车辆延误/资质异常', 'TRANSPORT'],
+  VEHICLE_DELAY: ['车辆延误', 'TRANSPORT'],
+  VEHICLE_ISSUE: ['车辆资质异常', 'TRANSPORT'],
   PERMIT_MISSING: ['接运许可待补', 'TRANSPORT'],
   NONLOCAL: ['外地逝者协同', 'TRANSPORT'],
   GENERAL: ['其他协同', 'CLERK']

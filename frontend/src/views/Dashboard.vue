@@ -84,7 +84,7 @@ const collabTxt = (k) => ({
   DOC_MISSING: '材料缺失', FAMILY_DISAGREE: '亲属分歧', REDUCTION_REVIEW: '减免审核',
   HALL_CONFLICT: '礼厅冲突', FURNACE_MAINT: '设备检修', NONLOCAL: '外地逝者',
   CREMATION_CONFLICT: '火化排期冲突', COLD_SHORTAGE: '冷藏位不足',
-  VEHICLE_DELAY: '车辆延误/资质', PERMIT_MISSING: '接运许可待补', GENERAL: '其他'
+  VEHICLE_DELAY: '车辆延误', VEHICLE_ISSUE: '车辆资质异常', PERMIT_MISSING: '接运许可待补', GENERAL: '其他'
 }[k] || k)
 
 async function load() {
